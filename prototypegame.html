@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<title>Foraging Game</title>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+<style>
+  body { margin:0; background:#eee; }
+  #game-container { margin: auto; padding-top: 20px; width: 800px; }
+</style>
+</head>
+<body>
+<div id="game-container"></div>
+<script>
+const config = {
+  type: Phaser.AUTO,
+  width: 800,
+  height: 600,
+  parent: 'game-container',
+  backgroundColor: '#fafafa',
+  physics: {
+    default: 'arcade',
+    arcade: { debug: false }
+  },
+  scene: {
+    preload,
+    create,
+    update
+  }
+};
+
+const BUSH_COUNT = 20;
+const BERRIES_PER_BUSH = 3;
+const GAME_DURATION = 10 * 60 * 1000; // 10 minutes in ms (adjust for testing)
+const PLAYER_SPEED = 150;
+
+let game = new Phaser.Game(config);
+
+function preload() {
+  this.load.image('bush', 'https://i.imgur.com/MGx3vO1.png'); // simple bush icon
+  this.load.image('player', 'https://i.imgur.com/t8vJv2q.png'); // blue square
+  this.load.image('bot', 'https://i.imgur.com/r5fgiL0.png'); // red square
+  this.load.image('berry_right', 'https://i.imgur.com/PxuSTvG.png'); // purple berry
+  this.load.image('berry_wrong', 'https://i.imgur.com/OrFq6Qo.png'); // orange berry
+}
+
+function create() {
+  this.condition = Phaser.Math.RND.pick(['active_harm', 'passive_harm', 'control']);
+  this.startTime = this.time.now;
+  this.score = 0;
+  this.playerRight = 0;
+  this.playerWrong = 0;
+  this.botRight = 0;
+  this.botWrong = 0;
+  this.playerMoves = 0;
+  this.botMoves = 0;
+  this.playerIdleTime = 0;
+  this.botIdleTime = 0;
+
+  this.add.text(10, 10, 'Use arrow keys or WASD to move.', { fontSize: '16px', fill: '#000' });
+
+  this.bushes = this.physics.add.staticGroup();
+  this.berries = this.physics.add.group();
+
+  for(let i=0; i < BUSH_COUNT; i++){
+    let x = Phaser.Math.Between(50, 750);
+    let y = Phaser.Math.Between(50, 550);
+    let bush = this.bushes.create(x, y, 'bush');
+    bush.setScale(0.7);
+    bush.berries = [];
+
+    for(let b=0; b < BERRIES_PER_BUSH; b++){
+      // Assign berries by color - right (purple) or wrong (orange)
+      let type = (Math.random() < 0.5) ? 'right' : 'wrong';
+      let berryKey = type === 'right' ? 'berry_right' : 'berry_wrong';
+      let bx = x + Phaser.Math.Between(-12, 12);
+      let by = y + Phaser.Math.Between(-12, 12);
+      let berry = this.berries.create(bx, by, berryKey);
+      berry.type = type;
+      berry.bush = bush;
+      bush.berries.push(berry);
+    }
+  }
+
+  this.player = this.physics.add.sprite(100, 100, 'player').setDepth(1);
+  this.player.setCollideWorldBounds(true);
+
+  this.bot = this.physics.add.sprite(700, 500, 'bot').setDepth(1);
+  this.bot.setCollideWorldBounds(true);
+  this.bot.targetBush = null;
+
+  this.cursors = this.input.keyboard.createCursorKeys();
+  this.WASD = this.input.keyboard.addKeys('W,A,S,D');
+
+  // Collisions and overlaps
+  this.physics.add.overlap(this.player, this.berries, playerCollectBerry, null, this);
+  this.physics.add.overlap(this.bot, this.berries, botCollectBerry, null, this);
+
+  // For movement tracking
+  this.prevPlayerPos = new Phaser.Math.Vector2(this.player.x, this.player.y);
+  this.prevBotPos = new Phaser.Math.Vector2(this.bot.x, this.bot.y);
+
+  this.textTimer = this.add.text(700, 10, '', { fontSize: '16px', fill: '#000' });
+  this.textScore = this.add.text(10, 40, '', { fontSize: '18px', fill: '#000' });
+
+  // Condition display (for testing; remove or hide in actual deployment)
+  // this.add.text(350, 10, 'Condition: ' + this.condition, { fontSize: '18px', fill: '#000' });
+}
+
+function update(time, delta) {
+  // Timer
+  let elapsed = time - this.startTime;
+  let remaining = Math.max(0, GAME_DURATION - elapsed);
+  this.textTimer.setText('Time left: ' + Math.ceil(remaining / 1000) + 's');
+
+  if(remaining <= 0){
+    this.scene.pause();
+    showEndScreen.call(this);
+    return;
+  }
+
+  // Player movement
+  let velocityX = 0, velocityY = 0;
+  if(this.cursors.left.isDown || this.WASD.A.isDown) velocityX = -PLAYER_SPEED;
+  else if(this.cursors.right.isDown || this.WASD.D.isDown) velocityX = PLAYER_SPEED;
+  if(this.cursors.up.isDown || this.WASD.W.isDown) velocityY = -PLAYER_SPEED;
+  else if(this.cursors.down.isDown || this.WASD.S.isDown) velocityY = PLAYER_SPEED;
+
+  this.player.setVelocity(velocityX, velocityY);
+
+  if(velocityX !== 0 || velocityY !== 0){
+    this.playerMoves++;
+  } else {
+    this.playerIdleTime += delta;
+  }
+
+  // Bot behavior by condition
+  if(!this.bot.targetBush || this.bot.targetBush.berries.length === 0){
+    if(Math.random() < 0.02){
+      this.bot.targetBush = Phaser.Utils.Array.GetRandom(this.bushes.getChildren());
+    }
+  }
+
+  if(this.bot.targetBush){
+    let dist = Phaser.Math.Distance.Between(this.bot.x, this.bot.y, this.bot.targetBush.x, this.bot.targetBush.y);
+    if(dist > 10){
+      // Move towards target bush based on condition
+      let speed = 0;
+      if(this.condition === 'passive_harm') speed = 50;
+      else speed = 120;
+
+      this.physics.moveToObject(this.bot, this.bot.targetBush, speed);
+      this.botMoves++;
+    } else {
+      this.bot.setVelocity(0);
+    }
+  }
+
+  if(this.bot.body.velocity.length() === 0){
+    this.botIdleTime += delta;
+  }
+}
+
+function playerCollectBerry(player, berry){
+  berry.disableBody(true,true);
+  if(berry.type === 'right'){
+    this.playerRight++;
+    this.score++;
+  } else {
+    this.playerWrong++;
+    this.score--;
+  }
+}
+
+function botCollectBerry(bot, berry){
+  // Bot picks berries differently by condition
+  if(this.condition === 'active_harm'){
+    // 70% chance bot picks wrong berries
+    if(berry.type === 'wrong' || Math.random() < 0.7){
+      if(berry.type === 'wrong') this.botWrong++;
+      else this.botRight++;
+      berry.disableBody(true,true);
+    }
+  } else if(this.condition === 'passive_harm'){
+    // Bot picks fewer berries overall, mostly right berries, and is slow
+    if(Math.random() < 0.3){
+      if(berry.type === 'right'){
+        this.botRight++;
+        berry.disableBody(true,true);
+      }
+    }
+  } else {
+    // Control condition: bot picks all berries it overlaps
+    if(berry.type === 'right') this.botRight++;
+    else this.botWrong++;
+    berry.disableBody(true,true);
+  }
+}
+
+function showEndScreen(){
+  let totalScore = this.playerRight + this.botRight - (this.playerWrong + this.botWrong);
+
+  let messages = {
+    active_harm: "Your partner picked many wrong berries.",
+    passive_harm: "Your partner barely moved and collected few berries.",
+    control: "You and your partner performed similarly."
+  };
+
+  this.cameras.main.setBackgroundColor('#222');
+
+  let style = { fontSize: '24px', fill: '#fff', align: 'center', wordWrap: { width: 700 } };
+
+  this.add.text(400, 100, 'Game Over', style).setOrigin(0.5);
+  this.add.text(400, 150, `Condition: ${this.condition.replace('_',' ').toUpperCase()}`, style).setOrigin(0.5);
+
+  this.add.text(400, 210, 
+    `Your berries: Right: ${this.playerRight} | Wrong: ${this.playerWrong}\n` +
+    `Partner berries: Right: ${this.botRight} | Wrong: ${this.botWrong}\n` +
+    `Total score: ${totalScore}`, style).setOrigin(0.5);
+
+  this.add.text(400, 330, messages[this.condition], style).setOrigin(0.5);
+
+  this.add.text(400, 420, 'Redirecting to the next survey...', { fontSize: '20px', fill: '#fff' }).setOrigin(0.5);
+
+  // Prepare Qualtrics redirect with URL params
+  let baseUrl = 'https://your.qualtrics.com/jfe/form/EXAMPLE'; // CHANGE this
+
+  let params = new URLSearchParams({
+    condition: this.condition,
+    player_score: totalScore,
+    player_right: this.playerRight,
+    player_wrong: this.playerWrong,
+    bot_right: this.botRight,
+    bot_wrong: this.botWrong,
+    player_moves: this.playerMoves,
+    bot_moves: this.botMoves,
+    player_idle_ms: Math.round(this.playerIdleTime),
+    bot_idle_ms: Math.round(this.botIdleTime)
+  });
+
+  setTimeout(() => {
+    window.location.href = `${baseUrl}?${params.toString()}`;
+  }, 7000);  // 7 seconds delay so they can read feedback
+}
+</script>
+</body>
+</html>
