@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Foraging Game</title>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+<style>
+  body { margin:0; background:#eee; }
+  #game-container { margin: auto; padding-top: 20px; width: 800px; }
+</style>
+</head>
+<body>
+<div id="game-container"></div>
+<script>
+const config = {
+  type: Phaser.AUTO,
+  width: 800,
+  height: 600,
+  parent: 'game-container',
+  backgroundColor: '#fafafa',
+  physics: {
+    default: 'arcade',
+    arcade: { debug: false }
+  },
+  scene: {
+    preload,
+    create,
+    update
+  }
+};
+
+const BUSH_COUNT = 20;
+const BERRIES_PER_BUSH = 3;
+const GAME_DURATION = 10 * 60 * 1000; // 10 minutes in ms, adjust for testing
+const PLAYER_SPEED = 150;
+
+let game = new Phaser.Game(config);
+
+function preload() {
+  // No external images needed now
+}
+
+function create() {
+  this.condition = Phaser.Math.RND.pick(['active_harm', 'passive_harm', 'control']);
+  this.startTime = this.time.now;
+  this.score = 0;
+  this.playerRight = 0;
+  this.playerWrong = 0;
+  this.botRight = 0;
+  this.botWrong = 0;
+  this.playerMoves = 0;
+  this.botMoves = 0;
+  this.playerIdleTime = 0;
+  this.botIdleTime = 0;
+
+  this.add.text(10, 10, 'Use arrow keys or WASD to move.', { fontSize: '16px', fill: '#000' });
+
+  // Draw background: green grass with brown dirt path in center
+  let graphics = this.add.graphics();
+  graphics.fillStyle(0x7cfc00, 1); // bright green grass
+  graphics.fillRect(0, 0, 800, 600);
+  graphics.fillStyle(0x8b4513, 1); // brown dirt path
+  graphics.fillRect(100, 0, 600, 600);
+
+  // Create bushes as green circles with physics static bodies
+  this.bushes = this.physics.add.staticGroup();
+  this.berries = this.physics.add.group();
+
+  for(let i=0; i < BUSH_COUNT; i++){
+    let x = Phaser.Math.Between(130, 670);
+    let y = Phaser.Math.Between(50, 550);
+    let bush = this.add.circle(x, y, 30, 0x006400);
+    this.physics.add.existing(bush, true);
+    bush.berries = [];
+
+    this.bushes.add(bush);
+
+    for(let b=0; b < BERRIES_PER_BUSH; b++){
+      let type = (Math.random() < 0.5) ? 'right' : 'wrong';
+      let bx = x + Phaser.Math.Bet
